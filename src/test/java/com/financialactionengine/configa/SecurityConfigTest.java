@@ -1,4 +1,4 @@
-package com.financialactionengine.config;
+package com.financialactionengine.configa;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
