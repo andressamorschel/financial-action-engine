@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: financial-action-engine
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/financial-action-engine
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/financial_actions
+    username: financial_actions
+    password: local_dev_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+
+server:
+  port: 8081
