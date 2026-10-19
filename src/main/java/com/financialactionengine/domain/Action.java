@@ -35,10 +35,10 @@ public class Action extends BaseEntity {
     @Column(name = "idempotency_key", nullable = false, length = 128)
     private String idempotencyKey;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String description;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 3)
     @Convert(converter = CurrencyConverter.class)
     private Currency currency;
 
@@ -48,11 +48,7 @@ public class Action extends BaseEntity {
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
-    private ActionType type;
-
-    @Column(nullable = false)
-    @Enumerated(EnumType.STRING)
-    private ActionStatus status;
+    private ActionStatus status = ActionStatus.PROPOSED;
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)

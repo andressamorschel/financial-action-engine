@@ -10,7 +10,6 @@ CREATE TABLE financial_actions (
     currency VARCHAR(3) NOT NULL,
 
     risk_level VARCHAR(255),
-    type VARCHAR(255) NOT NULL,
     status VARCHAR(255) NOT NULL,
     source VARCHAR(255) NOT NULL,
 

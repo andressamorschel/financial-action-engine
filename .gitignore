@@ -38,3 +38,5 @@ gradle
 
 ### VS Code ###
 .vscode/
+
+.env.keycloak
