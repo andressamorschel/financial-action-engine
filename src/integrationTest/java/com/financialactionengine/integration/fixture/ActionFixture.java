@@ -2,6 +2,8 @@ package com.financialactionengine.integration.fixture;
 
 import io.restassured.response.Response;
 
+import java.util.Optional;
+
 import static io.restassured.RestAssured.given;
 
 public final class ActionFixture {
@@ -16,6 +18,7 @@ public final class ActionFixture {
             request.auth()
                    .oauth2(token);
         }
+
         if (idempotencyKey != null) {
             request.header("Idempotency-Key", idempotencyKey);
         }

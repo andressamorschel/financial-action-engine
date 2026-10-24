@@ -1,7 +1,9 @@
 package com.financialactionengine.application;
 
 import com.financialactionengine.api.dto.CreateActionRequest;
-import com.financialactionengine.application.exception.IdempotencyConflictException;
+import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.CONFLICT;
 import com.financialactionengine.domain.Action;
 import com.financialactionengine.infrastructure.persistence.ActionRepository;
 import jakarta.transaction.Transactional;
@@ -19,6 +21,8 @@ public class CreateActionService {
 
     private final ActionRepository actionRepository;
 
+    private final ActionValidator actionValidator;
+
     @Transactional
     public Action create(
             CreateActionRequest request,
@@ -32,11 +36,13 @@ public class CreateActionService {
             var action = existingAction.get();
 
             if (!matches(action, request)) {
-                throw new IdempotencyConflictException();
+                throw new ResponseStatusException(CONFLICT, "Idempotency key was already used with different action data");
             }
 
             return action;
         }
+
+        actionValidator.validate(request);
 
         var action = buildAction(request, clientId, idempotencyKey);
 
@@ -61,7 +67,8 @@ public class CreateActionService {
             Action action,
             CreateActionRequest request
     ) {
-        return action.getAmount()
+        return request != null && request.getAmount() != null
+                && action.getAmount()
                      .compareTo(request.getAmount()) == 0
                 && Objects.equals(action.getCurrency(), request.getCurrency())
                 && Objects.equals(action.getDescription(), request.getDescription())

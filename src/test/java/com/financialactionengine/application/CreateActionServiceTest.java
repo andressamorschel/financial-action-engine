@@ -1,10 +1,15 @@
 package com.financialactionengine.application;
 
 import com.financialactionengine.api.dto.CreateActionRequest;
-import com.financialactionengine.application.exception.IdempotencyConflictException;
+import org.springframework.web.server.ResponseStatusException;
+
+import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
 import com.financialactionengine.domain.Action;
 import com.financialactionengine.infrastructure.persistence.ActionRepository;
 import org.junit.jupiter.api.Test;
+
+import static org.springframework.test.util.ReflectionTestUtils.setField;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -30,23 +35,26 @@ class CreateActionServiceTest {
     @Mock
     private ActionRepository actionRepository;
 
+    @Mock
+    private ActionValidator actionValidator;
+
     @InjectMocks
     private CreateActionService service;
 
     @Test
     void shouldSaveActionWithRequestFieldsAndDefaultsAndReturnSavedAction() {
-        var request = mock(CreateActionRequest.class);
+        var request = new CreateActionRequest();
         var amount = new BigDecimal("150.75");
         var currency = Currency.getInstance("BRL");
         var clientId = "client-123";
         var idempotencyKey = "action-456";
         var savedAction = mock(Action.class);
 
-        when(request.getAmount()).thenReturn(amount);
-        when(request.getDescription()).thenReturn("Transfer between accounts");
-        when(request.getCurrency()).thenReturn(currency);
-        when(request.getDebitAccountId()).thenReturn("debit-123");
-        when(request.getCreditAccountId()).thenReturn("credit-456");
+        setField(request, "amount", amount);
+        setField(request, "description", "Transfer between accounts");
+        setField(request, "currency", currency);
+        setField(request, "debitAccountId", "debit-123");
+        setField(request, "creditAccountId", "credit-456");
         when(actionRepository.save(any(Action.class))).thenReturn(savedAction);
         when(actionRepository.findByClientIdAndIdempotencyKey(clientId, idempotencyKey))
                 .thenReturn(Optional.empty());
@@ -54,6 +62,7 @@ class CreateActionServiceTest {
         var result = service.create(request, clientId, idempotencyKey);
         var actionCaptor = ArgumentCaptor.forClass(Action.class);
 
+        verify(actionValidator).validate(request);
         verify(actionRepository).save(actionCaptor.capture());
         verify(actionRepository).findByClientIdAndIdempotencyKey(clientId, idempotencyKey);
         var action = actionCaptor.getValue();
@@ -72,7 +81,9 @@ class CreateActionServiceTest {
 
     @Test
     void shouldPropagateRepositoryException() {
-        var request = new CreateActionRequest();
+        var action = existingAction();
+        var request = matchingRequest(action);
+        setField(request, "amount", action.getAmount());
         var exception = new DataIntegrityViolationException("Duplicate idempotency key");
         when(actionRepository.save(any(Action.class))).thenThrow(exception);
 
@@ -88,13 +99,14 @@ class CreateActionServiceTest {
     void shouldReturnExistingActionWhenRequestMatchesRegardlessOfAmountScale(String amount) {
         var action = existingAction();
         var request = matchingRequest(action);
-        when(request.getAmount()).thenReturn(new BigDecimal(amount));
+        setField(request, "amount", new BigDecimal(amount));
         when(actionRepository.findByClientIdAndIdempotencyKey("client-123", "action-456"))
                 .thenReturn(Optional.of(action));
 
         var result = service.create(request, "client-123", "action-456");
 
         assertSame(action, result);
+        verifyNoInteractions(actionValidator);
         verify(actionRepository).findByClientIdAndIdempotencyKey("client-123", "action-456");
         verify(actionRepository, never()).save(any(Action.class));
     }
@@ -107,11 +119,37 @@ class CreateActionServiceTest {
         when(actionRepository.findByClientIdAndIdempotencyKey("client-123", "action-456"))
                 .thenReturn(Optional.of(action));
 
-        assertThrows(IdempotencyConflictException.class,
+        var exception = assertThrows(ResponseStatusException.class,
                 () -> service.create(request, "client-123", "action-456"));
+        assertEquals(CONFLICT, exception.getStatusCode());
 
         verify(actionRepository).findByClientIdAndIdempotencyKey("client-123", "action-456");
         verify(actionRepository, never()).save(any(Action.class));
+    }
+
+    @Test
+    void shouldPropagateExceptionWhenValidationFailsWithoutSaving() {
+        var request = new CreateActionRequest();
+        var validationException = new ResponseStatusException(BAD_REQUEST, "Invalid financial action fields.");
+        doThrow(validationException).when(actionValidator).validate(request);
+
+        var exception = assertThrows(ResponseStatusException.class,
+                () -> service.create(request, "client-123", "new-key"));
+        assertSame(validationException, exception);
+        assertEquals(BAD_REQUEST, exception.getStatusCode());
+        verify(actionValidator).validate(request);
+        verify(actionRepository, never()).save(any());
+    }
+
+    @Test
+    void shouldTreatMissingAmountOnRetryAsConflict() {
+        when(actionRepository.findByClientIdAndIdempotencyKey("client-123", "action-456"))
+                .thenReturn(Optional.of(existingAction()));
+        var exception = assertThrows(ResponseStatusException.class,
+                () -> service.create(new CreateActionRequest(), "client-123", "action-456"));
+        assertEquals(CONFLICT, exception.getStatusCode());
+        verifyNoInteractions(actionValidator);
+        verify(actionRepository, never()).save(any());
     }
 
     private Action existingAction() {
@@ -127,40 +165,26 @@ class CreateActionServiceTest {
     }
 
     private CreateActionRequest conflictingRequest(Action action, String field) {
-        var request = mock(CreateActionRequest.class);
-        if (field.equals("amount")) {
-            when(request.getAmount()).thenReturn(new BigDecimal("200.00"));
-            return request;
-        }
-        when(request.getAmount()).thenReturn(action.getAmount());
-
-        if (field.equals("currency")) {
-            when(request.getCurrency()).thenReturn(Currency.getInstance("USD"));
-            return request;
-        }
-        when(request.getCurrency()).thenReturn(action.getCurrency());
-
-        if (field.equals("description")) {
-            when(request.getDescription()).thenReturn("Different description");
-            return request;
-        }
-        when(request.getDescription()).thenReturn(action.getDescription());
-
-        if (field.equals("debitAccountId")) {
-            when(request.getDebitAccountId()).thenReturn("different-debit");
-            return request;
-        }
-        when(request.getDebitAccountId()).thenReturn(action.getDebitAccountId());
-        when(request.getCreditAccountId()).thenReturn("different-credit");
+        var request = matchingRequest(action);
+        Object value = switch (field) {
+            case "amount" -> new BigDecimal("200.00");
+            case "currency" -> Currency.getInstance("USD");
+            case "description" -> "Different description";
+            case "debitAccountId" -> "different-debit";
+            case "creditAccountId" -> "different-credit";
+            default -> throw new IllegalArgumentException(field);
+        };
+        setField(request, field, value);
         return request;
     }
 
     private CreateActionRequest matchingRequest(Action action) {
-        var request = mock(CreateActionRequest.class);
-        when(request.getCurrency()).thenReturn(action.getCurrency());
-        when(request.getDescription()).thenReturn(action.getDescription());
-        when(request.getDebitAccountId()).thenReturn(action.getDebitAccountId());
-        when(request.getCreditAccountId()).thenReturn(action.getCreditAccountId());
+        var request = new CreateActionRequest();
+        setField(request, "amount", action.getAmount());
+        setField(request, "currency", action.getCurrency());
+        setField(request, "description", action.getDescription());
+        setField(request, "debitAccountId", action.getDebitAccountId());
+        setField(request, "creditAccountId", action.getCreditAccountId());
         return request;
     }
 }

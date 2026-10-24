@@ -22,8 +22,10 @@ public class CreateActionRequest {
     private Currency currency;
 
     @NotBlank
+    @Size(max = 255)
     private String creditAccountId;
 
     @NotBlank
+    @Size(max = 255)
     private String debitAccountId;
 }
